@@ -1,6 +1,5 @@
 # evalscope_auto_tools
  An automated testing tool based on EvalScope that facilitates performance and accuracy testing.
-# evalscope_auto_tools_prefix
 
 PR合入联系王晨阳
 
@@ -23,10 +22,6 @@ PR合入联系王晨阳
 - 利用本工具生成数据集
 
 ## 使用方法
-
-evalscope测试工具文件结构
-
-![image-20260624181543410](http://image.huawei.com/tiny-lts/v1/images/hi3ms/9fc2e93111ea3af9aebef626c2a3753c_451x614.png)
 
 进入带[evalscope](https://github.com/modelscope/evalscope)的环境，下载本工具 -> 修改本工具的config.py -> 运行python命令
 
