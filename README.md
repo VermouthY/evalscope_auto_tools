@@ -212,16 +212,18 @@ python3 evalscope_test.py --test_accuracy --dataset_name aime25 --eval_batch_siz
 `evaluation_all.log` 
 
 ## FAQ（常见问题）
+### 1、出现ValueError: Dataset is empty!报错，请修改evalscope的校验逻辑
+修改文件`evalscope/perf/plugin/datasets/custom.py`的`build_messages`函数，将`is_valid,_ = self.check_prompt_length(prompt)`改成`is_valid = True`
 
-### 1、出现ERROR日志：生成数据集失败，请清空picked ids
+### 2、出现ERROR日志：生成数据集失败，请清空picked ids
 
 解决方案：删除picked_ids.txt文件
 
-### 2、加载tokenizer报错
+### 3、加载tokenizer报错
 
 解决方案：检查当前transformers版本是否适配模型，如GLM5需更新mindie/vllm镜像内transformers版本
 
-### 3、常用shell固定并发测试脚本
+### 4、常用shell固定并发测试脚本
 
 ```bash
 bs=(1 8 16 24 32 40 48 56)
@@ -231,7 +233,7 @@ do
 done
 ```
 
-### 4、打屏不显示prefix cache命中率信息
+### 5、打屏不显示prefix cache命中率信息
 
 只有开启--prefix_test才会打印命中率信息，若开启后打屏不显示，可按照下面方案尝试解决。
 
