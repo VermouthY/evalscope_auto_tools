@@ -2,9 +2,13 @@
 
 PR合入联系王晨阳
 
+## 最新更新（2026/8/12）
+1.增加了aime2026数据集的精度测试功能；
+2.增加了random定长数据集测试功能；
+3.增加了并发前缀命中率查询
+
 ## 最新更新（2026/6/25）
 1、支持变长数据集
-
 2、bug修复repeat_rate 1场景
 
 ## 适用场景
@@ -143,31 +147,36 @@ ${prefix_data2}%^&${suffix_data2}
 
 **注：测试prefix cache功能需先预热前缀，保证跑完整数据集时存在命中**
 
-1、测试2k/2k不带前缀的gsm8k数据集性能
+1、测试4K/1K不带前缀定长random数据集性能
+```bash
+python3 evalscope_test.py --input_len 4096 --output_len 1024 --data_num 16 --concurrency 4 --request_rate -1 --random
+```
+
+2、测试2k/2k不带前缀的gsm8k数据集性能
 
 ```bash
 python3 evalscope_test.py --input_len 2048 --output_len 2048 --data_num 160 --concurrency 40 --request_rate 10
 ```
 
-2、测试2k/2k带前缀的gsm8k数据集性能，前缀个数1，数据集前缀重复率50%，dp 2，**先预热前缀**
+3、测试2k/2k带前缀的gsm8k数据集性能，前缀个数1，数据集前缀重复率50%，dp 2，**先预热前缀**
 
 ```bash
 python3 evalscope_test.py --input_len 2048 --output_len 2048 --data_num 160 --concurrency 40 --request_rate 10 --dataset_type prefix_cache --repeat_rate 0.5 --prefix_test --dp 2
 ```
 
-3、测试2k/2k带前缀的gsm8k数据集性能，前缀个数3，数据集前缀重复率73%，不预热前缀直接跑完整数据集
+4、测试2k/2k带前缀的gsm8k数据集性能，前缀个数3，数据集前缀重复率73%，不预热前缀直接跑完整数据集
 
 ```bash
 python3 evalscope_test.py --input_len 2048 --output_len 2048 --data_num 160 --concurrency 40 --request_rate 10 --dataset_type prefix_cache --repeat_rate 73% --seed 200 --prefix_num 3
 ```
 
-4、测试8k~128k**不定长**，平均32k，带前缀的gsm8k数据集性能，数据集前缀重复率90%，dp 2，**先预热前缀**
+5、测试8k~128k**不定长**，平均32k，带前缀的gsm8k数据集性能，数据集前缀重复率90%，dp 2，**先预热前缀**
 
 ```bash
 python3 evalscope_test.py --input_len 32768 --output_len 300 --data_num 32 --concurrency 8 --request_rate -1 --dataset_type prefix_cache --repeat_rate 90% --prefix_test --dp 2 --length_mean 32768 --length_std 49152 --length_min 8192 --length_max 131072
 ```
 
-5、测试指定数据集性能（仅限**gsm8k**格式）
+6、测试指定数据集性能（仅限**gsm8k**格式）
 
 ```bash
 python3 evalscope_test.py --dataset "/mnt/path_to_dataset/medium2.jsonl" --output_len 20 --concurrency 1024
