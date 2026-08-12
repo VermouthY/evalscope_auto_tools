@@ -1,4 +1,4 @@
-# 数据集文件夹路径，需可访问
+# 数据集文件夹路径，需可访问(请使用绝对路径)
 DATASET_PATH = "/home/dataset"
 
 # 服务化配置的模型名称
@@ -23,5 +23,6 @@ POD_INFO = []
 # 性能测试无需改动
 EVAL_DATASETS={'mmlu_pro':'./eval_datasets/MMLU-Pro',
                'aime25':'./eval_datasets/aime25',
+               'aime26':'./eval_datasets/aime26',
                'gpqa_diamond':'./eval_datasets/gpqa_diamond',
                'gsm8k':'./eval_datasets/gsm8k'}

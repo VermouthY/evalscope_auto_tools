@@ -1,7 +1,7 @@
 import argparse
 import logging
 from pathlib import Path
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from evalscope.perf.main import run_perf_benchmark
 from evalscope.perf.arguments import Arguments
 from evalscope import TaskConfig, run_task
@@ -24,6 +24,7 @@ def parse_arguments():
     parser.add_argument("--dataset", type=str, default="none", help="dataset path")
     parser.add_argument("--repeat", type=int, default=1, help="number of test repeat times")
     parser.add_argument("--test_accuracy", action='store_true', default=False, help="test accuracy")
+    parser.add_argument("--random", action='store_true', default=False, help="use random dataset")
     parser.add_argument("--dataset_name", type=str, default="none", help="dataset name")
     parser.add_argument("--eval_batch_size", type=int, default=1, help="The batch size for evaluation.")
     parser.add_argument("--max_tokens", type=int, default=8192, help="Maximum number of tokens generated.")
@@ -88,8 +89,8 @@ def generate_perf_command(dataset_path, input_len, output_len, concurrency, data
         parallel=[concurrency],
         number=[data_num],
         rate=[request_rate],
-        dataset='custom',
-        dataset_path=str(dataset_path),
+        dataset='random' if dataset_path is None else 'custom',
+        dataset_path=None if dataset_path is None else str(dataset_path),
         min_prompt_length=input_len,
         max_prompt_length=input_len,
         min_tokens=output_len, # The minimum number of tokens that can be generated.
@@ -115,79 +116,120 @@ def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature
     return task_cfg
 
 
+def _fetch_pod_metrics(pod):
+    if pod.startswith('['):
+        # IPv6 格式: [ip]:port
+        ip = pod.split(']:')[0][1:]
+        port = pod.split(']:')[1]
+    elif pod.count(':') > 1:
+        # IPv6 格式无方括号: ip:port
+        ip, port = pod.rsplit(':', 1)
+    else:
+        # IPv4 格式: ip:port
+        ip, port = pod.split(":")
+    query_token, query_external = get_prefix_queries_total(ip, port)
+    hit_token, hit_external = get_prefix_hits_total(ip, port)
+    return pod, query_token, query_external, hit_token, hit_external
+
+
 def get_pod_metrics_info(pod_info):
-    query_tokens, query_tokens_external,hit_tokens,hit_tokens_external = {},{},{},{}
-    for pod in pod_info:
-        ip,port = pod.split(":")
-        query_tokens[pod],query_tokens_external[pod] = get_prefix_queries_total(ip,port)
-        hit_tokens[pod], hit_tokens_external[pod] = get_prefix_hits_total(ip,port)
+    query_tokens, query_tokens_external, hit_tokens, hit_tokens_external = {}, {}, {}, {}
+    with ThreadPoolExecutor(max_workers=len(pod_info)) as executor:
+        futures = [executor.submit(_fetch_pod_metrics, pod) for pod in pod_info]
+        for future in as_completed(futures):
+            pod, q_n, q_e, h_n, h_e = future.result()
+            query_tokens[pod] = q_n
+            query_tokens_external[pod] = q_e
+            hit_tokens[pod] = h_n
+            hit_tokens_external[pod] = h_e
     return query_tokens, query_tokens_external, hit_tokens, hit_tokens_external
 
 
-def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tokens_external,
-                        query_tokens_new, query_tokens_external_new, hit_tokens_new, hit_tokens_external_new):
-    if not query_tokens or not query_tokens_external or not hit_tokens or not hit_tokens_external:
+def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tokens_external, query_tokens_new,
+                        query_tokens_external_new, hit_tokens_new, hit_tokens_external_new):
+    if not query_tokens:
+        logging.warning("No prefix cache metrics found.")
         return
-    
-    # 定义列宽
-    col1_width = 15   # engine id
-    col2_width = 20   # hbm hit rate
-    col3_width = 20   # hbm(hit/query)
-    col4_width = 20   # external hit rate
-    col5_width = 20   # external(hit/query)
-    
-    # 按POD分组遍历
+
+    # 输出格式
+    line_width = 108
+    scope_width, hbm_rate_width, hbm_detail_width, external_rate_width = 25, 19, 21, 21
+    headers = ["scope", "hbm_hit_rate", "hbm(hit/query)", "external_hit_rate", "external(hit/query)"]
+    header = (f"{headers[0]:<{scope_width}}{headers[1]:<{hbm_rate_width}}"
+              f"{headers[2]:<{hbm_detail_width}}{headers[3]:<{external_rate_width}}{headers[4]}")
+
+    def format_rate(hits, queries):
+        return "0.00%" if queries == 0 else format(hits / queries, ".2%")
+
+    def build_row(scope, hbm_hits, hbm_queries, external_hits, external_queries):
+        return (f"{scope:<{scope_width}}{format_rate(hbm_hits, hbm_queries):<{hbm_rate_width}}"
+                f"{f'{hbm_hits}/{hbm_queries}':<{hbm_detail_width}}"
+                f"{format_rate(external_hits, external_queries):<{external_rate_width}}"
+                f"{external_hits}/{external_queries}")
+
+    total_hbm_queries = total_hbm_hits = total_external_queries = total_external_hits = 0
+    pod_rows, skipped_pods = [], []
+
     for pod, engines in sorted(query_tokens.items()):
-        # 准备数据行
-        data_rows = []
-        for engine_id, token in sorted(engines.items()):
-            query_hbm = query_tokens_new[pod][engine_id] - query_tokens[pod][engine_id]
-            hits_hbm = hit_tokens_new[pod][engine_id] - hit_tokens[pod][engine_id]
-            query_ex = query_tokens_external_new[pod][engine_id] - query_tokens_external[pod][engine_id]
-            hits_ex = hit_tokens_external_new[pod][engine_id] - hit_tokens_external[pod][engine_id]
-            
-            if query_hbm == 0:
-                hit_rate_str = "0%"
-                hit_detail = "0/0"
-            else:
-                hit_rate_str = format(hits_hbm / query_hbm, '.2%')
-                hit_detail = f"{hits_hbm}/{query_hbm}"
-            
-            if query_ex == 0:
-                hit_rate_ex_str = "0%"
-                hit_ex_detail = "0/0"
-            else:
-                hit_rate_ex_str = format(hits_ex / query_ex, '.2%')
-                hit_ex_detail = f"{hits_ex}/{query_ex}"
-            
-            data_rows.append({
-                'engine_id': str(engine_id),
-                'hbm_rate': hit_rate_str,
-                'hbm_detail': hit_detail,
-                'external_rate': hit_rate_ex_str,
-                'external_detail': hit_ex_detail
-            })
-        
-        # 定义表头
-        headers = ['engine_id', 'hbm_hit_rate', 'hbm(hit/query)', 'external_hit_rate', 'external(hit/query)']
-        
-        # 计算总宽度
-        total_width = col1_width + col2_width + col3_width + col4_width + col5_width + 8
-        
-        # 打印POD信息
-        print("\n" + "=" * total_width)
-        print(f"POD: {pod}")
-        print("=" * total_width)
-        
-        # 打印表头
-        print(f"{headers[0]:<{col1_width}} {headers[1]:<{col2_width}} {headers[2]:<{col3_width}} {headers[3]:<{col4_width}} {headers[4]:<{col5_width}}")
-        print("-" * total_width)
-        
-        # 打印数据行
-        for row in data_rows:
-            print(f"{row['engine_id']:<{col1_width}} {row['hbm_rate']:<{col2_width}} {row['hbm_detail']:<{col3_width}} {row['external_rate']:<{col4_width}} {row['external_detail']:<{col5_width}}")
-        
-        print("=" * total_width)
+        # 八类指标必须全部存在，且 engine_id 完全一致；
+        # 否则无法可靠计算“测试后累计值 - 测试前累计值”，跳过该 POD
+        metrics = [query_tokens.get(pod), query_tokens_external.get(pod), hit_tokens.get(pod),
+                   hit_tokens_external.get(pod), query_tokens_new.get(pod), query_tokens_external_new.get(pod),
+                   hit_tokens_new.get(pod), hit_tokens_external_new.get(pod)]
+
+        if not all(metrics):
+            skipped_pods.append(pod)
+            continue
+
+        engine_ids = set(engines)
+        if any(set(metric) != engine_ids for metric in metrics[1:]):
+            skipped_pods.append(pod)
+            continue
+
+        # 合并当前 POD 下所有 engine_id 的指标增量
+        pod_hbm_queries = sum(query_tokens_new[pod][engine_id] - query_tokens[pod][engine_id]
+                              for engine_id in engine_ids)
+        pod_hbm_hits = sum(hit_tokens_new[pod][engine_id] - hit_tokens[pod][engine_id]
+                           for engine_id in engine_ids)
+        pod_external_queries = sum(query_tokens_external_new[pod][engine_id]
+                                   - query_tokens_external[pod][engine_id] for engine_id in engine_ids)
+        pod_external_hits = sum(hit_tokens_external_new[pod][engine_id]
+                                - hit_tokens_external[pod][engine_id] for engine_id in engine_ids)
+
+        pod_rows.append(build_row(pod, pod_hbm_hits, pod_hbm_queries,
+                                  pod_external_hits, pod_external_queries))
+        total_hbm_queries += pod_hbm_queries
+        total_hbm_hits += pod_hbm_hits
+        total_external_queries += pod_external_queries
+        total_external_hits += pod_external_hits
+
+    if not pod_rows:
+        logging.warning(f"No valid prefix cache metrics found. Skipped PODs: {', '.join(skipped_pods)}")
+        return
+
+    all_pods_row = build_row("ALL_PODS", total_hbm_hits, total_hbm_queries,
+                             total_external_hits, total_external_queries)
+    skipped_pods_line = f"Skipped PODs: {', '.join(skipped_pods)}" if skipped_pods else None
+
+    # 控制台只输出所有有效 POD 的汇总
+    console_lines = ["=" * line_width, "Prefix cache hit summary", "=" * line_width, header,
+                     "-" * line_width, all_pods_row, "=" * line_width]
+
+    # 日志输出每个有效 POD 和最终汇总
+    log_lines = ["=" * line_width, "Prefix cache hit detail", "=" * line_width, header,
+                 "-" * line_width, *pod_rows, "-" * line_width, all_pods_row, "=" * line_width]
+
+    if skipped_pods_line:
+        console_lines.append(skipped_pods_line)
+        log_lines.append(skipped_pods_line)
+
+    print("\n".join(console_lines))
+
+    try:
+        with open("prefix_hit_rate.log", "a", encoding="utf-8") as log_file:
+            log_file.write("\n" + "\n".join(log_lines) + "\n")
+    except OSError as error:
+        logging.error(f"Failed to write prefix cache information to prefix_hit_rate.log: {error}")
 
 
 def validate_length_args(args):
@@ -239,7 +281,10 @@ def run_perf_test(args):
     repeat_rate = parse_prefix_ratio(args.repeat_rate)
 
     # 数据集准备
-    if args.dataset == "none":
+    if args.random:
+        src_file_data = None
+        logging.info("[random] 使用random数据集测试")
+    elif args.dataset == "none":
         src_file_prefix, src_file_data = create_gsm8k_dataset(
             args.dataset_type,
             args.input_len,
