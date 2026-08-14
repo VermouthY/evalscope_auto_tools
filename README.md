@@ -1,6 +1,10 @@
 # evalscope_auto_tools
 
 PR合入联系王晨阳
+## 最新更新（2026/8/14）
+1.支持精度测试时开启thinking模式
+
+2.优化了多dp域时前缀命中率的统计方式
 
 ## 最新更新（2026/8/12）
 1.增加了aime2026数据集的精度测试功能；
@@ -8,11 +12,6 @@ PR合入联系王晨阳
 2.增加了random定长数据集测试功能；
 
 3.增加了并发前缀命中率查询
-
-## 最新更新（2026/6/25）
-1、支持变长数据集
-
-2、bug修复repeat_rate 1场景
 
 ## 适用场景
 
@@ -61,6 +60,7 @@ POD_INFO = []
 # 性能测试无需改动
 EVAL_DATASETS={'mmlu_pro':'./eval_datasets/MMLU-Pro',
                'aime25':'./eval_datasets/aime25',
+               'aime26':'./eval_datasets/aime26',
                'gpqa_diamond':'./eval_datasets/gpqa_diamond',
                'gsm8k':'./eval_datasets/gsm8k'}
 
@@ -191,10 +191,10 @@ python3 evalscope_test.py --dataset "/mnt/path_to_dataset/medium2.jsonl" --outpu
 
 - 该工具支持的数据集和对应下载链接请参考[evalscope](https://evalscope.readthedocs.io/zh-cn/latest/get_started/supported_dataset/index.html)工具官方文档。
 
-举例：测试aime2025数据集
+举例：测试gpqa_diamond数据集，开启thinking模式
 
 ```bash
-python3 evalscope_test.py --test_accuracy --dataset_name aime25 --eval_batch_size 8 --max_tokens 65536 --temperature 1.0 --top_p 1.0
+python3 evalscope_test.py --test_accuracy --dataset_name gpqa_diamond --eval_batch_size 32 --max_tokens 65536 --temperature 1.0 --top_p 1.0 --enable_thinking
 ```
 
 ## 四、结果获取
