@@ -30,6 +30,8 @@ def parse_arguments():
     parser.add_argument("--max_tokens", type=int, default=8192, help="Maximum number of tokens generated.")
     parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature, range 0~2")
     parser.add_argument("--top_p", type=float, default=1.0, help="Nucleus sampling; only considers tokens accounting for top_p probability mass")
+    parser.add_argument("--enable_thinking", action='store_true', default=False, help="whether thinking mode is enabled")
+    parser.add_argument("--timeout", type=int, default=600, help="Request timeout (seconds)")
     parser.add_argument("--npu_num", type=int, default=1, help="npu numbers")
     parser.add_argument("--dataset_type", type=str, default="normal", help="normal or prefix_cache")
     parser.add_argument("--prefix_num", type=int, default=1, help="prefix numbers")
@@ -47,7 +49,9 @@ def parse_arguments():
 def create_gsm8k_dataset(dataset_type, input_len, data_num, model_path, dataset_path, dp, prefix_num, repeat_rate, seed,
                          length_mean=None, length_std=None, length_min=None, length_max=None):
     if not Path(dataset_path).exists():
-        raise FileNotFoundError(f"dataset work path {dataset_path} not exist")
+        logging.warning(f"dataset work path {dataset_path} not exist. creating it automatically.")
+        Path(dataset_path).mkdir(parents=True, exist_ok=True)
+        logging.info(f"dataset work path {dataset_path} created.")
 
     base_name = Path(model_path).name
     if dataset_type == "prefix_cache":
@@ -102,7 +106,7 @@ def generate_perf_command(dataset_path, input_len, output_len, concurrency, data
     return task_cfg
 
 
-def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature, top_p):
+def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature, top_p, enable_thinking, timeout):
     dataset_id = EVAL_DATASETS[dataset_name]
     task_cfg = TaskConfig(
         model=MODEL_NAME,
@@ -110,7 +114,11 @@ def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature
         eval_batch_size=eval_batch_size,
         datasets=[dataset_name],
         dataset_args={dataset_name:{'dataset_id':dataset_id}},
-        generation_config={'max_tokens':max_tokens, 'temperature':temperature, 'top_p':top_p},
+        generation_config={'max_tokens':max_tokens, 
+                           'temperature':temperature, 
+                           'top_p':top_p,
+                           'timeout':timeout,
+                           'extra_body':{'chat_template_kwargs': {'enable_thinking': enable_thinking}}},
         work_dir=OUTPUT_DIR,
     )
     return task_cfg
@@ -152,8 +160,8 @@ def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tok
         return
 
     # 输出格式
-    line_width = 108
-    scope_width, hbm_rate_width, hbm_detail_width, external_rate_width = 25, 19, 21, 21
+    line_width = 118
+    scope_width, hbm_rate_width, hbm_detail_width, external_rate_width = 35, 19, 21, 21
     headers = ["scope", "hbm_hit_rate", "hbm(hit/query)", "external_hit_rate", "external(hit/query)"]
     header = (f"{headers[0]:<{scope_width}}{headers[1]:<{hbm_rate_width}}"
               f"{headers[2]:<{hbm_detail_width}}{headers[3]:<{external_rate_width}}{headers[4]}")
@@ -168,11 +176,11 @@ def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tok
                 f"{external_hits}/{external_queries}")
 
     total_hbm_queries = total_hbm_hits = total_external_queries = total_external_hits = 0
-    pod_rows, skipped_pods = [], []
+    pod_sections, skipped_pods = [], []
 
     for pod, engines in sorted(query_tokens.items()):
         # 八类指标必须全部存在，且 engine_id 完全一致；
-        # 否则无法可靠计算“测试后累计值 - 测试前累计值”，跳过该 POD
+        # 否则无法可靠计算"测试后累计值 - 测试前累计值"，跳过该 POD
         metrics = [query_tokens.get(pod), query_tokens_external.get(pod), hit_tokens.get(pod),
                    hit_tokens_external.get(pod), query_tokens_new.get(pod), query_tokens_external_new.get(pod),
                    hit_tokens_new.get(pod), hit_tokens_external_new.get(pod)]
@@ -186,7 +194,20 @@ def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tok
             skipped_pods.append(pod)
             continue
 
-        # 合并当前 POD 下所有 engine_id 的指标增量
+        # 按 engine_id 升序遍历，为每个 engine 单独生成一行
+        engine_rows = []
+        for engine_id in sorted(engine_ids):
+            engine_scope = f"{pod}/engine{engine_id}"
+            engine_hbm_queries = query_tokens_new[pod][engine_id] - query_tokens[pod][engine_id]
+            engine_hbm_hits = hit_tokens_new[pod][engine_id] - hit_tokens[pod][engine_id]
+            engine_external_queries = query_tokens_external_new[pod][engine_id] \
+                - query_tokens_external[pod][engine_id]
+            engine_external_hits = hit_tokens_external_new[pod][engine_id] \
+                - hit_tokens_external[pod][engine_id]
+            engine_rows.append(build_row(engine_scope, engine_hbm_hits, engine_hbm_queries,
+                                         engine_external_hits, engine_external_queries))
+
+        # 合并当前 POD 下所有 engine_id 的指标增量，用于 ALL_PODS 汇总
         pod_hbm_queries = sum(query_tokens_new[pod][engine_id] - query_tokens[pod][engine_id]
                               for engine_id in engine_ids)
         pod_hbm_hits = sum(hit_tokens_new[pod][engine_id] - hit_tokens[pod][engine_id]
@@ -196,14 +217,14 @@ def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tok
         pod_external_hits = sum(hit_tokens_external_new[pod][engine_id]
                                 - hit_tokens_external[pod][engine_id] for engine_id in engine_ids)
 
-        pod_rows.append(build_row(pod, pod_hbm_hits, pod_hbm_queries,
-                                  pod_external_hits, pod_external_queries))
+        # 每个 POD 按 engine 升序输出，POD 之间用分隔线隔开
+        pod_sections.append(engine_rows)
         total_hbm_queries += pod_hbm_queries
         total_hbm_hits += pod_hbm_hits
         total_external_queries += pod_external_queries
         total_external_hits += pod_external_hits
 
-    if not pod_rows:
+    if not pod_sections:
         logging.warning(f"No valid prefix cache metrics found. Skipped PODs: {', '.join(skipped_pods)}")
         return
 
@@ -215,9 +236,14 @@ def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tok
     console_lines = ["=" * line_width, "Prefix cache hit summary", "=" * line_width, header,
                      "-" * line_width, all_pods_row, "=" * line_width]
 
-    # 日志输出每个有效 POD 和最终汇总
+    # 日志输出每个 POD 下所有 engine 的详细信息，POD 之间用分隔线隔开
     log_lines = ["=" * line_width, "Prefix cache hit detail", "=" * line_width, header,
-                 "-" * line_width, *pod_rows, "-" * line_width, all_pods_row, "=" * line_width]
+                 "-" * line_width]
+    for idx, section in enumerate(pod_sections):
+        if idx > 0:
+            log_lines.append("-" * line_width)
+        log_lines.extend(section)
+    log_lines.extend(["-" * line_width, all_pods_row, "=" * line_width])
 
     if skipped_pods_line:
         console_lines.append(skipped_pods_line)
@@ -226,10 +252,12 @@ def cal_prefix_hit_info(query_tokens, query_tokens_external, hit_tokens, hit_tok
     print("\n".join(console_lines))
 
     try:
-        with open("prefix_hit_rate.log", "a", encoding="utf-8") as log_file:
+        with open("benchmark.log", "a", encoding="utf-8") as log_file:
             log_file.write("\n" + "\n".join(log_lines) + "\n")
+        with open("benchmark_all.log", "a", encoding="utf-8") as all_log_file:
+            all_log_file.write("\n" + "\n".join(log_lines) + "\n")
     except OSError as error:
-        logging.error(f"Failed to write prefix cache information to prefix_hit_rate.log: {error}")
+        logging.error(f"Failed to write prefix cache information to log files: {error}")
 
 
 def validate_length_args(args):
@@ -262,6 +290,8 @@ def run_accuracy_test(args):
         args.max_tokens,
         args.temperature,
         args.top_p,
+        args.enable_thinking, 
+        args.timeout
     )
 
     logging.info(f"eval test start, use command: {task_cfg}")
