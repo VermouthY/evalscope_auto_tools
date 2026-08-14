@@ -85,6 +85,8 @@ EVAL_DATASETS={'mmlu_pro':'./eval_datasets/MMLU-Pro',
 | --max_tokens | int | 最大生成token数量（精度测试时使用）                          |
 | --temperature | float | 采样温度，范围0~2，越高越随机（精度测试时使用）              |
 | --top_p | float | Nucleus采样，考虑概率质量为top_p的token（精度测试时使用）    |
+| --enable_thinking | bool  | 开启思考模式，默认值false                                    |
+| --timeout | int | 请求超时时间（秒，精度测试时使用）                          |
 | --npu_num | int | npu卡数，用于计算单卡吞吐，默认值1 |
 | --dataset_type| str | normal or prefix_cache，一般数据集or带前缀数据集，默认值normal|
 | --prefix_num | int | 前缀个数，默认值1 |
