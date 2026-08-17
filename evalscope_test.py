@@ -28,10 +28,13 @@ def parse_arguments():
     parser.add_argument("--dataset_name", type=str, default="none", help="dataset name")
     parser.add_argument("--eval_batch_size", type=int, default=1, help="The batch size for evaluation.")
     parser.add_argument("--max_tokens", type=int, default=8192, help="Maximum number of tokens generated.")
-    parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature, range 0~2")
-    parser.add_argument("--top_p", type=float, default=1.0, help="Nucleus sampling; only considers tokens accounting for top_p probability mass")
+    parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature, range 0~2")
+    parser.add_argument("--frequency_penalty", type=float, default=None, help="Range -2.0~2.0; positive values penalize repeated tokens")
+    parser.add_argument("--presence_penalty", type=float, default=None, help="Range -2.0~2.0; positive values penalize already appeared tokens")
+    parser.add_argument("--repetition_penalty", type=float, default=None, help="Exponential penalty applied to existing tokens. 1.0 means no penalty")
+    parser.add_argument("--top_p", type=float, default=None, help="Nucleus sampling; only considers tokens accounting for top_p probability mass")
+    parser.add_argument("--top_k", type=int, default=None, help="Sample next token from the top_k most likely candidates")
     parser.add_argument("--enable_thinking", action='store_true', default=False, help="whether thinking mode is enabled")
-    parser.add_argument("--timeout", type=int, default=600, help="Request timeout (seconds)")
     parser.add_argument("--npu_num", type=int, default=1, help="npu numbers")
     parser.add_argument("--dataset_type", type=str, default="normal", help="normal or prefix_cache")
     parser.add_argument("--prefix_num", type=int, default=1, help="prefix numbers")
@@ -76,7 +79,7 @@ def create_gsm8k_dataset(dataset_type, input_len, data_num, model_path, dataset_
         # 判断数据集是否存在
         if not Path(dataset_jsonl_path).exists():
             logging.warning(f"Dataset {dataset_name} is not exist. Start create dataset")
-            # create_data(input_len, data_num, model_path, dataset_path)
+            
             prefix_jsonl_path, dataset_jsonl_path = create_multi_prefix_dataset(model_path,input_len,data_num,dataset_path,0,dp,0,seed,prefix_num,
                                                                                  length_mean, length_std, length_min, length_max)
             logging.info(f"Dataset {dataset_name} created.")
@@ -106,7 +109,8 @@ def generate_perf_command(dataset_path, input_len, output_len, concurrency, data
     return task_cfg
 
 
-def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature, top_p, enable_thinking, timeout):
+def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature, top_p, top_k, 
+                          frequency_penalty, presence_penalty, repetition_penalty, enable_thinking):
     dataset_id = EVAL_DATASETS[dataset_name]
     task_cfg = TaskConfig(
         model=MODEL_NAME,
@@ -117,7 +121,13 @@ def generate_eval_command(dataset_name, eval_batch_size, max_tokens, temperature
         generation_config={'max_tokens':max_tokens, 
                            'temperature':temperature, 
                            'top_p':top_p,
-                           'timeout':timeout,
+                           'top_k':top_k,
+                           'frequency_penalty':frequency_penalty,
+                           'presence_penalty':presence_penalty,
+                           'repetition_penalty':repetition_penalty,
+                           'timeout':1800,
+                           'retries':5,
+                           'retry_interval':180,
                            'extra_body':{'chat_template_kwargs': {'enable_thinking': enable_thinking}}},
         work_dir=OUTPUT_DIR,
     )
@@ -290,8 +300,11 @@ def run_accuracy_test(args):
         args.max_tokens,
         args.temperature,
         args.top_p,
-        args.enable_thinking, 
-        args.timeout
+        args.top_k,
+        args.frequency_penalty, 
+        args.presence_penalty, 
+        args.repetition_penalty,
+        args.enable_thinking,
     )
 
     logging.info(f"eval test start, use command: {task_cfg}")

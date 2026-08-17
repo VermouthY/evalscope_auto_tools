@@ -84,7 +84,11 @@ EVAL_DATASETS={'mmlu_pro':'./eval_datasets/MMLU-Pro',
 | --eval_batch_size | int | 同时进行精度评测的批量大小（精度测试时使用）                 |
 | --max_tokens | int | 最大生成token数量（精度测试时使用）                          |
 | --temperature | float | 采样温度，范围0~2，越高越随机（精度测试时使用）              |
+| --frequency_penalty | float | 范围-2.0~2.0，正值惩罚重复token（精度测试时使用）              |
+| --presence_penalty | float | 范围-2.0~2.0，正值惩罚已出现token（精度测试时使用）              |
+| --repetition_penalty | float | 对已生成token施加指数惩罚，1.0 表示不惩罚（精度测试时使用）              |
 | --top_p | float | Nucleus采样，考虑概率质量为top_p的token（精度测试时使用）    |
+| --top_k | int | 从top_k最可能的词中采样（精度测试时使用）    |
 | --enable_thinking | bool  | 开启思考模式，默认值false                                    |
 | --timeout | int | 请求超时时间（秒，精度测试时使用）                          |
 | --npu_num | int | npu卡数，用于计算单卡吞吐，默认值1 |
@@ -191,12 +195,13 @@ python3 evalscope_test.py --dataset "/mnt/path_to_dataset/medium2.jsonl" --outpu
 
 - 目前该工具内自带`mmlu_pro`、`aime25`、`aime26`、`gpqa_diamond`、`gsm8k`五个常用数据集，若需测试其他数据集，请先下载到本地后，再把该数据集名称和本地路径作为键值对加入到`config.py`中的`EVAL_DATASETS`字典中。
 
+
 - 该工具支持的数据集和对应下载链接请参考[evalscope](https://evalscope.readthedocs.io/zh-cn/latest/get_started/supported_dataset/index.html)工具官方文档。
 
 举例：测试gpqa_diamond数据集，开启thinking模式
 
 ```bash
-python3 evalscope_test.py --test_accuracy --dataset_name gpqa_diamond --eval_batch_size 32 --max_tokens 65536 --temperature 1.0 --top_p 1.0 --enable_thinking
+python3 evalscope_test.py --test_accuracy --dataset_name gpqa_diamond --eval_batch_size 32 --max_tokens 131072 --temperature 1.0 --top_p 1.0 --enable_thinking
 ```
 
 ## 四、结果获取
