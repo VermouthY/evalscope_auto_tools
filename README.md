@@ -189,7 +189,7 @@ python3 evalscope_test.py --dataset "/mnt/path_to_dataset/medium2.jsonl" --outpu
 
 #### 3.2 精度测试
 
-- 目前该工具内自带`mmlu_pro`、`aime25`、`gpqa_diamond`、`gsm8k`四个常用数据集，若需测试其他数据集，请先下载到本地后，再把该数据集名称和本地路径作为键值对加入到`config.py`中的`EVAL_DATASETS`字典中。
+- 目前该工具内自带`mmlu_pro`、`aime25`、`aime26`、`gpqa_diamond`、`gsm8k`五个常用数据集，若需测试其他数据集，请先下载到本地后，再把该数据集名称和本地路径作为键值对加入到`config.py`中的`EVAL_DATASETS`字典中。
 
 - 该工具支持的数据集和对应下载链接请参考[evalscope](https://evalscope.readthedocs.io/zh-cn/latest/get_started/supported_dataset/index.html)工具官方文档。
 
